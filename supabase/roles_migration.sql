@@ -99,8 +99,8 @@ using (
 create policy "videos_insert_by_role" on public.videos
 for insert to authenticated
 with check (
-  public.current_team_role()='owner'
-  or (public.current_team_role()='editor' and editor_id=auth.uid())
+  public.current_team_role() in ('owner','editor')
+  and editor_id = auth.uid()
 );
 
 create policy "videos_update_by_role" on public.videos
@@ -122,41 +122,6 @@ using (
 );
 
 grant select, insert, update, delete on public.videos to authenticated;
-
-create or replace function public.claim_video(p_video_id text)
-returns void language plpgsql security definer
-set search_path = public, auth
-as $$
-declare v_name text;
-begin
-  if public.current_team_role() <> 'editor' then
-    raise exception 'Only editors can claim videos';
-  end if;
-  select coalesce(nullif(raw_user_meta_data->>'name',''), split_part(email,'@',1))
-    into v_name from auth.users where id=auth.uid();
-  update public.videos
-     set editor_id=auth.uid(), editor_name=initcap(v_name), status='Editing'
-   where id::text=p_video_id and editor_id is null;
-  if not found then raise exception 'This video is already assigned or unavailable'; end if;
-end;
-$$;
-grant execute on function public.claim_video(text) to authenticated;
-
-create or replace function public.release_video(p_video_id text)
-returns void language plpgsql security definer
-set search_path = public, auth
-as $$
-begin
-  if public.current_team_role() <> 'editor' then
-    raise exception 'Only editors can release their own videos';
-  end if;
-  update public.videos
-     set editor_id=null, editor_name=null, status='Pending'
-   where id::text=p_video_id and editor_id=auth.uid();
-  if not found then raise exception 'This video is not assigned to your account'; end if;
-end;
-$$;
-grant execute on function public.release_video(text) to authenticated;
 
 -- Stop rather than silently assigning only a subset of the intended accounts.
 do $$
