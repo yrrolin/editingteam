@@ -12,14 +12,9 @@ create table if not exists public.team_members (
 
 alter table public.team_members enable row level security;
 drop policy if exists "team members read own" on public.team_members;
-drop policy if exists "team members owner manage" on public.team_members;
 create policy "team members read own" on public.team_members
 for select to authenticated using (user_id = auth.uid());
-create policy "team members owner manage" on public.team_members
-for all to authenticated
-using (exists (select 1 from public.team_members tm where tm.user_id=auth.uid() and tm.role='owner'))
-with check (exists (select 1 from public.team_members tm where tm.user_id=auth.uid() and tm.role='owner'));
-grant select, insert, update, delete on public.team_members to authenticated;
+grant select on public.team_members to authenticated;
 
 create or replace function public.current_team_role()
 returns text language sql stable security definer
@@ -83,7 +78,7 @@ using (
 
 grant select, insert, update, delete on public.videos to authenticated;
 
-create or replace function public.claim_video(p_video_id bigint)
+create or replace function public.claim_video(p_video_id text)
 returns void language plpgsql security definer
 set search_path = public, auth
 as $$
@@ -96,7 +91,7 @@ begin
     into v_name from auth.users where id=auth.uid();
   update public.videos
      set editor_id=auth.uid(), editor_name=initcap(v_name), status='Editing'
-   where id=p_video_id and editor_id is null;
+   where id::text=p_video_id and editor_id is null;
   if not found then raise exception 'This video is already assigned or unavailable'; end if;
 end;
 $$;
