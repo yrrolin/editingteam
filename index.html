@@ -219,7 +219,7 @@ function render(){
       <div class="c">${esc(r.client)||'—'}</div>
       <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
       <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span>${canManage?`<select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select>`:`<span>${esc(r.status||'Pending')}</span>`}</div>
-      <div class="acts">${canClaim?`<button type="button" data-action="take">I’ll edit</button>`:''}${(role==='owner'||(role==='editor'&&r.editor_id===me?.id))&&r.editor_id?`<button type="button" data-action="release">Release</button>`:''}${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
+      <div class="acts">${canClaim?`<button type="button" data-action="take">I’ll edit</button>`:''}${(role==='owner'&&(r.editor_id||r.editor_name)||(role==='editor'&&r.editor_id===me?.id))?`<button type="button" data-action="release">Release</button>`:''}${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
     </div>`;
   }).join(''):'<div class="empty">No matching videos. Try another search or filter.</div>';
 }
