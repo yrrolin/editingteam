@@ -54,6 +54,14 @@ async function showSession(user){
  if(!user){if(channel){sb.removeChannel(channel);channel=null;}rows=[];role=null;return;}
  try{
   const {data,error}=await sb.from('team_members').select('role').eq('user_id',user.id).single();if(error)throw error;role=data.role;
+  if(role==='pending'){
+   $('app').classList.add('hide');
+   $('signedout').classList.add('hide');
+   $('boardlink').classList.add('hide');
+   $('teamsection').classList.add('hide');
+   notice('Your account has been created and is awaiting owner approval. You will get access after an owner assigns your role.');
+   return;
+  }
   $('boardlink').classList.toggle('hide',role==='client');
   $('teamsection').classList.toggle('hide',role!=='owner');
   if(!['owner','editor','client'].includes(role))throw new Error('This account has no permitted Rudrakrit role.');
@@ -73,7 +81,7 @@ async function loadTeam(){
  try{
   const {data,error}=await sb.from('team_members').select('user_id,email,role,client_name').order('email');
   if(error)throw error;
-  $('team').innerHTML=(data||[]).map(m=>'<article class="card team-member" data-user="'+esc(m.user_id)+'"><h3>'+esc(m.email||'Team account')+'</h3><div style="display:grid;gap:9px"><select class="member-role" aria-label="Role for '+esc(m.email)+'"><option value="owner" '+(m.role==='owner'?'selected':'')+'>Owner</option><option value="editor" '+(m.role==='editor'?'selected':'')+'>Editor</option><option value="client" '+(m.role==='client'?'selected':'')+'>Client</option></select><input class="member-client" value="'+esc(m.client_name||'')+'" placeholder="Client/project name (clients only)"><button type="button" class="save-member">Save access</button></div></article>').join('')||'<div class="empty">No team accounts found.</div>';
+  $('team').innerHTML=(data||[]).map(m=>'<article class="card team-member" data-user="'+esc(m.user_id)+'"><h3>'+esc(m.email||'Team account')+'</h3><div style="display:grid;gap:9px"><select class="member-role" aria-label="Role for '+esc(m.email)+'"><option value="pending" '+(m.role==='pending'?'selected':'')+'>Pending approval</option><option value="owner" '+(m.role==='owner'?'selected':'')+'>Owner</option><option value="editor" '+(m.role==='editor'?'selected':'')+'>Editor</option><option value="client" '+(m.role==='client'?'selected':'')+'>Client</option></select><input class="member-client" value="'+esc(m.client_name||'')+'" placeholder="Client/project name (clients only)"><button type="button" class="save-member">Save access</button></div></article>').join('')||'<div class="empty">No team accounts found.</div>';
  }catch(e){notice('Could not load team access: '+e.message);}
 }
 $('team').addEventListener('click',async e=>{
