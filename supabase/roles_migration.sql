@@ -5,16 +5,30 @@ begin;
 create table if not exists public.team_members (
   user_id uuid primary key references auth.users(id) on delete cascade,
   role text not null check (role in ('owner','editor','client')),
+  email text,
   client_name text,
   created_at timestamptz not null default now(),
   constraint client_role_has_name check (role <> 'client' or nullif(btrim(client_name),'') is not null)
 );
 
 alter table public.team_members enable row level security;
+alter table public.team_members add column if not exists email text;
 drop policy if exists "team members read own" on public.team_members;
+drop policy if exists "team members owner manage" on public.team_members;
+create or replace function public.is_team_owner()
+returns boolean language sql stable security definer
+set search_path = public, auth
+as $
+  select exists (select 1 from public.team_members where user_id=auth.uid() and role='owner')
+$;
+grant execute on function public.is_team_owner() to authenticated;
+
 create policy "team members read own" on public.team_members
 for select to authenticated using (user_id = auth.uid());
-grant select on public.team_members to authenticated;
+create policy "team members owner manage" on public.team_members
+for all to authenticated using (public.is_team_owner())
+with check (public.is_team_owner());
+grant select, insert, update, delete on public.team_members to authenticated;
 
 create or replace function public.current_team_role()
 returns text language sql stable security definer
@@ -33,6 +47,7 @@ $$;
 grant execute on function public.current_team_role() to authenticated;
 grant execute on function public.current_client_name() to authenticated;
 
+alter table public.videos enable row level security;
 alter table public.videos add column if not exists editor_id uuid references auth.users(id) on delete set null;
 
 drop policy if exists "team read" on public.videos;
@@ -95,20 +110,20 @@ begin
   if not found then raise exception 'This video is already assigned or unavailable'; end if;
 end;
 $$;
-grant execute on function public.claim_video(bigint) to authenticated;
+grant execute on function public.claim_video(text) to authenticated;
 
 -- Assign accounts by their existing Supabase Auth email addresses.
-insert into public.team_members(user_id,role,client_name)
-select id,'owner',null from auth.users where lower(email)=lower('dhavaljoshi4327@gmail.com')
-on conflict(user_id) do update set role=excluded.role, client_name=null;
+insert into public.team_members(user_id,role,email,client_name)
+select id,'owner',email,null from auth.users where lower(email)=lower('dhavaljoshi4327@gmail.com')
+on conflict(user_id) do update set role=excluded.role, email=excluded.email, client_name=null;
 
-insert into public.team_members(user_id,role,client_name)
-select id,'editor',null from auth.users where lower(email) in (lower('createwithaarush@gmail.com'),lower('aaravraj.rudrakrit@gmail.com'))
-on conflict(user_id) do update set role=excluded.role, client_name=null;
+insert into public.team_members(user_id,role,email,client_name)
+select id,'editor',email,null from auth.users where lower(email) in (lower('createwithaarush@gmail.com'),lower('aaravraj.rudrakrit@gmail.com'))
+on conflict(user_id) do update set role=excluded.role, email=excluded.email, client_name=null;
 
-insert into public.team_members(user_id,role,client_name)
-select id,'client','SkillMaxxing' from auth.users where lower(email)=lower('skillmaxxing7@gmail.com')
-on conflict(user_id) do update set role=excluded.role, client_name=excluded.client_name;
+insert into public.team_members(user_id,role,email,client_name)
+select id,'client',email,'SkillMaxxing' from auth.users where lower(email)=lower('skillmaxxing7@gmail.com')
+on conflict(user_id) do update set role=excluded.role, email=excluded.email, client_name=excluded.client_name;
 
 commit;
 
