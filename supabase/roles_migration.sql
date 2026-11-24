@@ -4,7 +4,7 @@ begin;
 
 create table if not exists public.team_members (
   user_id uuid primary key references auth.users(id) on delete cascade,
-  role text not null check (role in ('owner','editor','client')),
+  role text not null check (role in ('pending','owner','editor','client')),
   email text,
   client_name text,
   created_at timestamptz not null default now(),
@@ -13,6 +13,29 @@ create table if not exists public.team_members (
 
 alter table public.team_members enable row level security;
 alter table public.team_members add column if not exists email text;
+-- New Supabase Auth signups are automatically registered as pending.
+-- Pending users can sign in but cannot read or modify videos until approved.
+create or replace function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $
+begin
+  insert into public.team_members(user_id, role, email, client_name)
+  values (new.id, 'pending', new.email, null)
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$;
+
+drop trigger if exists on_auth_user_created_rudrakrit on auth.users;
+create trigger on_auth_user_created_rudrakrit
+after insert on auth.users
+for each row execute function public.handle_new_auth_user();
+
+revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
+
 -- Upgrade an existing installation's role constraint to include pending.
 alter table public.team_members
   drop constraint if exists team_members_role_check;
