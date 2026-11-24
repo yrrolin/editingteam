@@ -173,7 +173,7 @@ $('add').onsubmit=async e=>{
   try{
     const {error}=await sb.from('videos').insert({
       title:$('n-title').value.trim(),client:$('n-client').value.trim(),
-      footage_url:$('n-link').value.trim()||null,editor_id:role==='editor'?me.id:null
+      footage_url:$('n-link').value.trim()||null,editor_id:me.id,editor_name:myName(),status:'Editing'
     });
     if(error)throw error;
     e.target.reset();notify('Video added successfully.','ok');await load();
@@ -213,13 +213,12 @@ function render(){
     let footage='';
     try{const u=new URL(r.footage_url);if(['http:','https:'].includes(u.protocol))footage=`<a href="${esc(u.href)}" target="_blank" rel="noopener noreferrer">Footage ↗</a>`;}catch{}
     const canManage=role==='owner'||(role==='editor'&&r.editor_id===me?.id);
-    const canClaim=role==='editor'&&!r.editor_id;
     return `<div class="row" data-row-id="${esc(r.id)}">
       <div><div class="t">${esc(r.title)}</div>${footage}</div>
       <div class="c">${esc(r.client)||'—'}</div>
       <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
       <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span>${canManage?`<select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select>`:`<span>${esc(r.status||'Pending')}</span>`}</div>
-      <div class="acts">${canClaim?`<button type="button" data-action="take">I’ll edit</button>`:''}${(role==='owner'&&(r.editor_id||r.editor_name)||(role==='editor'&&r.editor_id===me?.id))?`<button type="button" data-action="release">Release</button>`:''}${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
+      <div class="acts">${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
     </div>`;
   }).join(''):'<div class="empty">No matching videos. Try another search or filter.</div>';
 }
