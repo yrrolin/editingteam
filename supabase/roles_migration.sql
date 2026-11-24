@@ -112,6 +112,38 @@ end;
 $$;
 grant execute on function public.claim_video(text) to authenticated;
 
+create or replace function public.release_video(p_video_id text)
+returns void language plpgsql security definer
+set search_path = public, auth
+as $
+begin
+  if public.current_team_role() <> 'editor' then
+    raise exception 'Only editors can release their own videos';
+  end if;
+  update public.videos
+     set editor_id=null, editor_name=null, status='Pending'
+   where id::text=p_video_id and editor_id=auth.uid();
+  if not found then raise exception 'This video is not assigned to your account'; end if;
+end;
+$;
+grant execute on function public.release_video(text) to authenticated;
+
+-- Stop rather than silently assigning only a subset of the intended accounts.
+do $
+begin
+  if (
+    select count(*) from auth.users
+    where lower(email) in (
+      lower('dhavaljoshi4327@gmail.com'),
+      lower('createwithaarush@gmail.com'),
+      lower('aaravraj.rudrakrit@gmail.com'),
+      lower('skillmaxxing7@gmail.com')
+    )
+  ) <> 4 then
+    raise exception 'Expected all four Supabase Auth users to exist; verify the account emails before running this migration.';
+  end if;
+end $;
+
 -- Assign accounts by their existing Supabase Auth email addresses.
 insert into public.team_members(user_id,role,email,client_name)
 select id,'owner',email,null from auth.users where lower(email)=lower('dhavaljoshi4327@gmail.com')
