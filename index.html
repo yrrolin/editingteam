@@ -37,6 +37,20 @@ input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{ou
 .acts{display:flex;gap:6px}.acts button{padding:6px 12px;font-size:13px}
 .msg{color:#ff7a7a;font-size:14px;min-height:18px}.notice{padding:13px 15px;border:1px solid #713d3d;background:#241516;color:#ffbcbc;border-radius:10px;margin:0 0 18px;line-height:1.45}.notice.ok{border-color:#315d46;background:#122018;color:#a9e8bf}.notice.warn{border-color:#76602e;background:#211c10;color:#f1d48a}
 .empty{color:var(--mute);padding:40px 0;border-top:1px solid var(--line)}
+.modal-backdrop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.72);backdrop-filter:blur(8px)}
+.modal{width:min(100%,480px);background:#171719;border:1px solid #303034;border-radius:18px;padding:26px;box-shadow:0 24px 80px rgba(0,0,0,.5)}
+.modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:22px}
+.modal-head h2{font-size:23px;font-weight:500;letter-spacing:-.025em}
+.modal-head p{font-size:13px;color:var(--mute);margin-top:5px}
+.modal-close{padding:5px 10px;font-size:18px;line-height:1}
+.modal-fields{display:grid;gap:15px}
+.modal-fields label{display:grid;gap:7px;font-size:13px;color:var(--mute)}
+.modal-fields input{color:var(--text)}
+.modal-hint{font-size:12px;color:var(--mute);margin-top:-7px}
+.modal-error{font-size:13px;color:#ff9292;min-height:18px}
+.modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px}
+body.modal-open{overflow:hidden}
+@media(max-width:520px){.modal{padding:21px}.modal-actions button{flex:1}}
 footer{margin-top:60px;color:var(--mute);font-size:13px}
 .hide{display:none!important}
 @media(max-width:720px){.add{grid-template-columns:1fr}.row{grid-template-columns:1fr 1fr;gap:8px}.acts{grid-column:1/-1}}
@@ -67,6 +81,20 @@ footer{margin-top:60px;color:var(--mute);font-size:13px}
     <div class="tabs" id="tabs"></div>
     <div id="list" aria-live="polite"></div>
   </main>
+  <div id="edit-modal" class="modal-backdrop hide" role="presentation">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-heading">
+      <div class="modal-head"><div><h2 id="edit-heading">Edit video</h2><p>Update the title or replace the footage link.</p></div><button type="button" class="modal-close" id="edit-close" aria-label="Close">×</button></div>
+      <form id="edit-form">
+        <div class="modal-fields">
+          <label for="edit-title">Video title<input id="edit-title" type="text" maxlength="180" required placeholder="Enter video title"></label>
+          <label for="edit-url">Footage URL<input id="edit-url" type="url" placeholder="https://…"></label>
+          <p class="modal-hint">Leave the URL empty if you want to remove the current link.</p>
+          <p id="edit-error" class="modal-error" role="alert"></p>
+        </div>
+        <div class="modal-actions"><button type="button" id="edit-cancel">Cancel</button><button type="submit" class="primary" id="edit-save">Save changes</button></div>
+      </form>
+    </section>
+  </div>
   <footer>© 2026 Rudrakrit. Consider it handled.</footer>
 </div>
 
@@ -186,6 +214,39 @@ async function updateVideo(id,patch){
   if(!data?.length)throw new Error('No row was updated. You may not have permission, or the video may have been removed.');
   await load();
 }
+let editingVideoId=null;
+function openEditModal(video){
+  editingVideoId=video.id;
+  $('edit-title').value=video.title||'';
+  $('edit-url').value=video.footage_url||'';
+  $('edit-error').textContent='';
+  $('edit-modal').classList.remove('hide');
+  document.body.classList.add('modal-open');
+  setTimeout(()=>$('edit-title').focus(),0);
+}
+function closeEditModal(){
+  $('edit-modal').classList.add('hide');
+  document.body.classList.remove('modal-open');
+  editingVideoId=null;
+}
+$('edit-close').addEventListener('click',closeEditModal);
+$('edit-cancel').addEventListener('click',closeEditModal);
+$('edit-modal').addEventListener('click',e=>{if(e.target===$('edit-modal'))closeEditModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('edit-modal').classList.contains('hide'))closeEditModal();});
+$('edit-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  if(editingVideoId===null)return;
+  const title=$('edit-title').value.trim(),url=$('edit-url').value.trim(),save=$('edit-save');
+  $('edit-error').textContent='';
+  if(!title){$('edit-error').textContent='Please enter a video title.';$('edit-title').focus();return;}
+  if(url){try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol))throw new Error();}catch{$('edit-error').textContent='Enter a valid http or https URL, or leave it blank.';$('edit-url').focus();return;}}
+  save.disabled=true;save.textContent='Saving…';
+  try{
+    await updateVideo(editingVideoId,{title,footage_url:url||null});
+    closeEditModal();notify('Video details updated.','ok');
+  }catch(error){$('edit-error').textContent=explainError(error,'Could not save changes');}
+  finally{save.disabled=false;save.textContent='Save changes';}
+});
 window.act=async(id,action,value)=>{
   clearNotice();
   try{
@@ -198,15 +259,7 @@ window.act=async(id,action,value)=>{
     if(action==='edit'){
       const video=rows.find(r=>String(r.id)===String(id));
       if(!video)throw new Error('Video not found. Refresh the board and try again.');
-      const nextTitle=prompt('Edit video title:',video.title||'');
-      if(nextTitle===null)return;
-      if(!nextTitle.trim())throw new Error('Video title cannot be empty.');
-      const nextUrl=prompt('Edit footage URL (leave blank to remove it):',video.footage_url||'');
-      if(nextUrl===null)return;
-      const cleanUrl=nextUrl.trim();
-      if(cleanUrl){try{const u=new URL(cleanUrl);if(!['http:','https:'].includes(u.protocol))throw new Error();}catch{throw new Error('Enter a valid http or https footage link, or leave it blank.');}}
-      await updateVideo(id,{title:nextTitle.trim(),footage_url:cleanUrl||null});
-      notify('Video title and footage URL updated.','ok');
+      openEditModal(video);
     }
     if(action==='del'&&(role==='owner'||(role==='editor'&&rows.find(r=>String(r.id)===String(id))?.editor_id===me?.id))&&confirm('Delete this video?')){
       const {error}=await sb.from('videos').delete().eq('id',id);
