@@ -25,7 +25,7 @@ input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{ou
 </style>
 </head>
 <body><div class="wrap">
-<header><div class="brand">Rudrakrit<span>Team Dashboard</span></div><nav><a href="index.html">Edit Board</a><a class="active" href="dashboard.html">Dashboard</a><button id="signout" type="button">Sign out</button></nav></header>
+<header><div class="brand">Rudrakrit<span>Team Dashboard</span></div><nav><a id="boardlink" href="index.html">Edit Board</a><a class="active" href="dashboard.html">Dashboard</a><button id="signout" type="button">Sign out</button></nav></header>
 <h1>The work, at a glance.</h1><p class="sub">A live overview of video progress, client projects and editor assignments.</p>
 <div id="notice" class="notice hide" role="status" aria-live="polite"></div>
 <div id="app" class="hide">
@@ -46,12 +46,17 @@ const SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
 const STATUSES=['Pending','Editing','Review','Done'];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let sb,channel=null,rows=[],loading=false,refreshQueued=false;
+let sb,channel=null,rows=[],loading=false,refreshQueued=false,role=null;
 function notice(message,ok=false){$('notice').textContent=message;$('notice').className='notice'+(ok?' ok':'');}
-function showSession(user){
+async function showSession(user){
  $('app').classList.toggle('hide',!user);$('signedout').classList.toggle('hide',!!user);
- if(!user){if(channel){sb.removeChannel(channel);channel=null;}rows=[];return;}
- refresh();if(!channel)subscribe();
+ if(!user){if(channel){sb.removeChannel(channel);channel=null;}rows=[];role=null;return;}
+ try{
+  const {data,error}=await sb.from('team_members').select('role').eq('user_id',user.id).single();if(error)throw error;role=data.role;
+  $('boardlink').classList.toggle('hide',role==='client');
+  if(!['owner','editor','client'].includes(role))throw new Error('This account has no permitted Rudrakrit role.');
+  refresh();if(!channel)subscribe();
+ }catch(e){notice('Role check failed. Run the Supabase roles migration first: '+(e.message||''));await sb.auth.signOut();}
 }
 async function refresh(){
  if(loading){refreshQueued=true;return;}loading=true;
