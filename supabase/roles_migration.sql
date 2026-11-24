@@ -20,14 +20,14 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public, auth
-as $
+as $$
 begin
   insert into public.team_members(user_id, role, email, client_name)
   values (new.id, 'pending', new.email, null)
   on conflict (user_id) do nothing;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists on_auth_user_created_rudrakrit on auth.users;
 create trigger on_auth_user_created_rudrakrit
