@@ -131,7 +131,7 @@ sb.auth.onAuthStateChange((event,session)=>{
       try{
         const {data,error}=await sb.from('team_members').select('role').eq('user_id',me.id).single();
         if(error)throw error; role=data.role;
-        if(role==='client'){location.replace('dashboard.html');return;}
+        if(role==='client'||role==='pending'){location.replace('dashboard.html');return;}
         if(!['owner','editor'].includes(role))throw new Error('This account has no permitted Rudrakrit role.');
         $('add').classList.toggle('hide',role!=='owner'&&role!=='editor');
         $('dashlink').classList.toggle('hide',role==='client');
