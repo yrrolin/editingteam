@@ -32,7 +32,7 @@ button:hover{border-color:var(--text)}
 .row a{color:var(--text);font-size:13px;text-decoration:underline;text-underline-offset:3px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
 .acts{display:flex;gap:6px}.acts button{padding:6px 12px;font-size:13px}
-.msg{color:#ff7a7a;font-size:14px;min-height:18px}
+.msg{color:#ff7a7a;font-size:14px;min-height:18px}.notice{padding:13px 15px;border:1px solid #713d3d;background:#241516;color:#ffbcbc;border-radius:10px;margin:0 0 18px;line-height:1.45}.notice.ok{border-color:#315d46;background:#122018;color:#a9e8bf}.notice.warn{border-color:#76602e;background:#211c10;color:#f1d48a}
 .empty{color:var(--mute);padding:40px 0;border-top:1px solid var(--line)}
 footer{margin-top:60px;color:var(--mute);font-size:13px}
 .hide{display:none!important}
@@ -45,6 +45,7 @@ footer{margin-top:60px;color:var(--mute);font-size:13px}
   <h1>Every edit,<br>one clear board.</h1>
   <p class="sub">See what’s pending, who’s editing it, and where it stands. Updates appear live for the whole team.</p>
 
+  <div id="notice" class="notice hide" role="alert" aria-live="polite"></div>
   <form id="login" class="login">
     <input id="em" type="email" placeholder="Team email" required>
     <input id="pw" type="password" placeholder="Password" required>
@@ -67,49 +68,131 @@ footer{margin-top:60px;color:var(--mute);font-size:13px}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script>
-const SUPABASE_URL='https://tkpjhvvxucjfepxnhfkr.supabase.co', SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
+const SUPABASE_URL='https://tkpjhvvxucjfepxnhfkr.supabase.co';
+const SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
 const STATUSES=['Pending','Editing','Review','Done'];
 const COLORS={Pending:'--pending',Editing:'--editing',Review:'--review',Done:'--done'};
-const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const $=id=>document.getElementById(id);
-let me=null,rows=[],filter='All';
+let me=null,rows=[],filter='All',channel=null,loginBusy=false;
+function notify(message,type='error'){
+  const box=$('notice'); box.textContent=message; box.className='notice'+(type==='ok'?' ok':type==='warn'?' warn':'');
+}
+function clearNotice(){const box=$('notice');box.textContent='';box.className='notice hide';}
+function explainError(error,context=''){
+  const raw=error?.message||error?.error_description||String(error||'Unknown error');
+  const msg=raw.toLowerCase();
+  if(msg.includes('invalid login credentials')) return 'Email or password is incorrect. Check the account under Supabase → Authentication → Users.';
+  if(msg.includes('email not confirmed')) return 'This account’s email is not confirmed. Confirm it in Supabase Authentication, or disable email confirmation for testing.';
+  if(msg.includes('user not found')) return 'No account exists for this email. Create the editor account in Supabase → Authentication → Users.';
+  if(msg.includes('failed to fetch')||msg.includes('network')) return 'Could not reach Supabase. Check your internet connection, Project URL, and whether the Supabase project is active.';
+  if(msg.includes('invalid api key')||msg.includes('apikey')) return 'Supabase rejected the API key. Verify that the publishable key belongs to this exact project.';
+  if(msg.includes('relation')&&msg.includes('does not exist')) return 'Login succeeded, but the videos table is missing. Create public.videos in Supabase SQL Editor.';
+  if(msg.includes('row-level security')||msg.includes('permission denied')||msg.includes('not allowed')) return 'Supabase blocked this database action. Check the videos table’s RLS policies for the authenticated role.';
+  if(msg.includes('column')&&msg.includes('does not exist')) return 'The videos table schema does not match this app. Check that it has title, client, footage_url, editor_name, status, and created_at columns.';
+  return (context?context+': ':'')+raw;
+}
+if(!window.supabase?.createClient){
+  notify('The Supabase client library did not load. Check your connection or CDN access, then refresh.'); throw new Error('Supabase JS client unavailable');
+}
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const myName=()=>{const n=me.user_metadata?.name||me.email.split('@')[0];return n.charAt(0).toUpperCase()+n.slice(1)};
+const myName=()=>{const n=me?.user_metadata?.name||me?.email?.split('@')[0]||'Editor';return n.charAt(0).toUpperCase()+n.slice(1);};
 
-$('login').onsubmit=async e=>{e.preventDefault();
-  const {error}=await sb.auth.signInWithPassword({email:$('em').value,password:$('pw').value});
-  $('lmsg').textContent=error?error.message:'';};
-$('out').onclick=()=>sb.auth.signOut();
+$('login').onsubmit=async e=>{
+  e.preventDefault(); if(loginBusy)return;
+  clearNotice(); loginBusy=true;
+  const button=$('login').querySelector('button');button.disabled=true;button.textContent='Signing in…';
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email:$('em').value.trim(),password:$('pw').value});
+    if(error) throw error;
+    if(data.user) notify('Signed in successfully. Loading your board…','ok');
+    else notify('Supabase did not return a user session. Check Authentication settings.');
+  }catch(error){notify(explainError(error,'Sign-in failed'));}
+  finally{loginBusy=false;button.disabled=false;button.textContent='Sign in';}
+};
+$('out').onclick=async()=>{
+  try{const {error}=await sb.auth.signOut();if(error)throw error;notify('You have signed out.','ok');}
+  catch(error){notify(explainError(error,'Sign-out failed'));}
+};
 
-sb.auth.onAuthStateChange((_e,s)=>{me=s?.user||null;
-  $('login').classList.toggle('hide',!!me);$('board').classList.toggle('hide',!me);$('out').classList.toggle('hide',!me);
-  if(me){load();sb.channel('videos').on('postgres_changes',{event:'*',schema:'public',table:'videos'},load).subscribe();}});
+sb.auth.onAuthStateChange((event,session)=>{
+  me=session?.user||null;
+  $('login').classList.toggle('hide',!!me);
+  $('board').classList.toggle('hide',!me);
+  $('out').classList.toggle('hide',!me);
+  if(me){
+    if(event==='SIGNED_IN') notify('Login successful. Fetching videos…','ok');
+    // Defer Supabase calls outside the auth callback to avoid locking its internal client.
+    setTimeout(()=>{load();startRealtime();},0);
+  }else{
+    rows=[];render();
+    if(channel){sb.removeChannel(channel);channel=null;}
+  }
+});
 
-async function load(){const {data,error}=await sb.from('videos').select('*').order('created_at',{ascending:false});
-  if(!error){rows=data;render();}}
-
-$('add').onsubmit=async e=>{e.preventDefault();
-  await sb.from('videos').insert({title:$('n-title').value,client:$('n-client').value,footage_url:$('n-link').value||null});
-  e.target.reset();};
-
-const upd=(id,patch)=>sb.from('videos').update(patch).eq('id',id);
-window.act=async(id,a,v)=>{
-  if(a==='take')await upd(id,{editor_name:myName(),status:'Editing'});
-  if(a==='release')await upd(id,{editor_name:null,status:'Pending'});
-  if(a==='status')await upd(id,{status:v});
-  if(a==='del'&&confirm('Delete this video?'))await sb.from('videos').delete().eq('id',id);};
+async function load(){
+  try{
+    const {data,error}=await sb.from('videos').select('*').order('created_at',{ascending:false});
+    if(error)throw error;
+    rows=data||[];render();
+    if(!rows.length) notify('Connected to Supabase. No videos yet — add your first video.','ok');
+    else clearNotice();
+  }catch(error){notify(explainError(error,'Could not load videos'));}
+}
+function startRealtime(){
+  if(channel)sb.removeChannel(channel);
+  channel=sb.channel('videos-board')
+    .on('postgres_changes',{event:'*',schema:'public',table:'videos'},()=>load())
+    .subscribe(status=>{
+      if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')notify('Live updates are unavailable. Refresh the page or check Supabase Realtime settings.','warn');
+    });
+}
+$('add').onsubmit=async e=>{
+  e.preventDefault();clearNotice();
+  const button=$('add').querySelector('button');button.disabled=true;button.textContent='Adding…';
+  try{
+    const {error}=await sb.from('videos').insert({
+      title:$('n-title').value.trim(),client:$('n-client').value.trim(),
+      footage_url:$('n-link').value.trim()||null
+    });
+    if(error)throw error;
+    e.target.reset();notify('Video added successfully.','ok');await load();
+  }catch(error){notify(explainError(error,'Could not add video'));}
+  finally{button.disabled=false;button.textContent='Add video';}
+};
+async function updateVideo(id,patch){
+  const {error}=await sb.from('videos').update(patch).eq('id',id);
+  if(error)throw error;
+  await load();
+}
+window.act=async(id,action,value)=>{
+  clearNotice();
+  try{
+    if(action==='take')await updateVideo(id,{editor_name:myName(),status:'Editing'});
+    if(action==='release')await updateVideo(id,{editor_name:null,status:'Pending'});
+    if(action==='status')await updateVideo(id,{status:value});
+    if(action==='del'&&confirm('Delete this video?')){
+      const {error}=await sb.from('videos').delete().eq('id',id);
+      if(error)throw error;await load();notify('Video deleted.','ok');
+    }
+  }catch(error){notify(explainError(error,'Action failed'));}
+};
 
 function render(){
-  $('tabs').innerHTML=['All',...STATUSES].map(s=>{const n=s==='All'?rows.length:rows.filter(r=>r.status===s).length;
-    return `<button class="${s===filter?'on':''}" onclick="filter='${s}';render()">${s} · ${n}</button>`}).join('');
-  const v=rows.filter(r=>filter==='All'||r.status===filter);
-  $('list').innerHTML=v.length?v.map(r=>`<div class="row">
+  $('tabs').innerHTML=['All',...STATUSES].map(s=>{
+    const n=s==='All'?rows.length:rows.filter(r=>r.status===s).length;
+    return `<button class="${s===filter?'on':''}" onclick="filter='${s}';render()">${s} · ${n}</button>`;
+  }).join('');
+  const visible=rows.filter(r=>filter==='All'||r.status===filter);
+  $('list').innerHTML=visible.length?visible.map(r=>`<div class="row">
     <div><div class="t">${esc(r.title)}</div>${r.footage_url?`<a href="${esc(r.footage_url)}" target="_blank" rel="noopener">Footage ↗</a>`:''}</div>
     <div class="c">${esc(r.client)||'—'}</div>
     <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
-    <div><span class="dot" style="background:var(${COLORS[r.status]})"></span><select style="width:auto;padding:6px 10px" onchange="act('${r.id}','status',this.value)">${STATUSES.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
-    <div class="acts">${r.editor_name?`<button onclick="act('${r.id}','release')">Release</button>`:`<button onclick="act('${r.id}','take')">I’ll edit</button>`}<button onclick="act('${r.id}','del')">✕</button></div>
-  </div>`).join(''):'<div class="empty">Nothing here yet.</div>';}
+    <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span><select style="width:auto;padding:6px 10px" onchange="act('${esc(r.id)}','status',this.value)">${STATUSES.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="acts">${r.editor_name?`<button onclick="act('${esc(r.id)}','release')">Release</button>`:`<button onclick="act('${esc(r.id)}','take')">I’ll edit</button>`}<button onclick="act('${esc(r.id)}','del')">✕</button></div>
+  </div>`).join(''):'<div class="empty">Nothing here yet.</div>';
+}
+render();
 </script>
 </body>
 </html>
