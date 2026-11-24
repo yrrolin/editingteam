@@ -13,6 +13,13 @@ create table if not exists public.team_members (
 
 alter table public.team_members enable row level security;
 alter table public.team_members add column if not exists email text;
+-- Upgrade an existing installation's role constraint to include pending.
+alter table public.team_members
+  drop constraint if exists team_members_role_check;
+alter table public.team_members
+  add constraint team_members_role_check
+  check (role in ('pending','owner','editor','client'));
+
 drop policy if exists "team members read own" on public.team_members;
 drop policy if exists "team members owner manage" on public.team_members;
 create or replace function public.is_team_owner()
