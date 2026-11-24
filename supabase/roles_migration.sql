@@ -18,9 +18,9 @@ drop policy if exists "team members owner manage" on public.team_members;
 create or replace function public.is_team_owner()
 returns boolean language sql stable security definer
 set search_path = public, auth
-as $
+as $$
   select exists (select 1 from public.team_members where user_id=auth.uid() and role='owner')
-$;
+$$;
 grant execute on function public.is_team_owner() to authenticated;
 
 create policy "team members read own" on public.team_members
@@ -115,7 +115,7 @@ grant execute on function public.claim_video(text) to authenticated;
 create or replace function public.release_video(p_video_id text)
 returns void language plpgsql security definer
 set search_path = public, auth
-as $
+as $$
 begin
   if public.current_team_role() <> 'editor' then
     raise exception 'Only editors can release their own videos';
@@ -125,11 +125,11 @@ begin
    where id::text=p_video_id and editor_id=auth.uid();
   if not found then raise exception 'This video is not assigned to your account'; end if;
 end;
-$;
+$$;
 grant execute on function public.release_video(text) to authenticated;
 
 -- Stop rather than silently assigning only a subset of the intended accounts.
-do $
+do $$
 begin
   if (
     select count(*) from auth.users
@@ -142,7 +142,7 @@ begin
   ) <> 4 then
     raise exception 'Expected all four Supabase Auth users to exist; verify the account emails before running this migration.';
   end if;
-end $;
+end $$;
 
 -- Assign accounts by their existing Supabase Auth email addresses.
 insert into public.team_members(user_id,role,email,client_name)
