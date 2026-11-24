@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rudrakrit · Edit Board</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0b0c;--panel:#141416;--line:#26262a;--text:#f2efe9;--mute:#8d8b86;--accent:#f2efe9;--accent-ink:#0b0b0c;
+--pending:#c9a227;--editing:#4c8dff;--review:#b36bff;--done:#3fb97a;--font:'Inter Tight',system-ui,-apple-system,Segoe UI,sans-serif}
+*{box-sizing:border-box;margin:0}
+html,body{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased}
+body{min-height:100vh;padding:max(20px,env(safe-area-inset-top)) 20px 60px}
+.wrap{max-width:960px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:center;padding:8px 0 40px}
+.brand{font-weight:600;font-size:20px;letter-spacing:-.02em}
+.brand span{color:var(--mute);font-weight:400;margin-left:10px}
+h1{font-size:clamp(34px,6vw,60px);line-height:1.02;letter-spacing:-.035em;font-weight:500;margin-bottom:12px}
+.sub{color:var(--mute);margin-bottom:36px;max-width:520px}
+input,select,button{font:inherit;color:inherit}
+input,select{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 14px;width:100%}
+input:focus,select:focus{outline:1px solid var(--text)}
+button{cursor:pointer;border:1px solid var(--line);background:transparent;border-radius:999px;padding:9px 18px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+button:hover{border-color:var(--text)}
+.login{max-width:380px;display:grid;gap:12px}
+.add{display:grid;grid-template-columns:2fr 1.5fr 2fr auto;gap:10px;margin-bottom:28px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.tabs button.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.row{display:grid;grid-template-columns:2.2fr 1.2fr 1.3fr 1.2fr auto;gap:14px;align-items:center;padding:16px 0;border-top:1px solid var(--line)}
+.row .t{font-weight:500}.row .c,.row .e{color:var(--mute);font-size:14px}
+.row a{color:var(--text);font-size:13px;text-decoration:underline;text-underline-offset:3px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
+.acts{display:flex;gap:6px}.acts button{padding:6px 12px;font-size:13px}
+.msg{color:#ff7a7a;font-size:14px;min-height:18px}
+.empty{color:var(--mute);padding:40px 0;border-top:1px solid var(--line)}
+footer{margin-top:60px;color:var(--mute);font-size:13px}
+.hide{display:none!important}
+@media(max-width:720px){.add{grid-template-columns:1fr}.row{grid-template-columns:1fr 1fr;gap:8px}.acts{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="brand">Rudrakrit<span>Edit Board</span></div><button id="out" class="hide">Sign out</button></header>
+  <h1>Every edit,<br>one clear board.</h1>
+  <p class="sub">See what’s pending, who’s editing it, and where it stands. Updates appear live for the whole team.</p>
+
+  <form id="login" class="login">
+    <input id="em" type="email" placeholder="Team email" required>
+    <input id="pw" type="password" placeholder="Password" required>
+    <button class="primary">Sign in</button>
+    <div class="msg" id="lmsg"></div>
+  </form>
+
+  <main id="board" class="hide">
+    <form class="add" id="add">
+      <input id="n-title" placeholder="Video title" required>
+      <input id="n-client" placeholder="Client / project">
+      <input id="n-link" type="url" placeholder="Raw footage / Drive link">
+      <button class="primary">Add video</button>
+    </form>
+    <div class="tabs" id="tabs"></div>
+    <div id="list"></div>
+  </main>
+  <footer>© 2026 Rudrakrit. Consider it handled.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL='YOUR_SUPABASE_URL', SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
+const STATUSES=['Pending','Editing','Review','Done'];
+const COLORS={Pending:'--pending',Editing:'--editing',Review:'--review',Done:'--done'};
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=id=>document.getElementById(id);
+let me=null,rows=[],filter='All';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const myName=()=>{const n=me.user_metadata?.name||me.email.split('@')[0];return n.charAt(0).toUpperCase()+n.slice(1)};
+
+$('login').onsubmit=async e=>{e.preventDefault();
+  const {error}=await sb.auth.signInWithPassword({email:$('em').value,password:$('pw').value});
+  $('lmsg').textContent=error?error.message:'';};
+$('out').onclick=()=>sb.auth.signOut();
+
+sb.auth.onAuthStateChange((_e,s)=>{me=s?.user||null;
+  $('login').classList.toggle('hide',!!me);$('board').classList.toggle('hide',!me);$('out').classList.toggle('hide',!me);
+  if(me){load();sb.channel('videos').on('postgres_changes',{event:'*',schema:'public',table:'videos'},load).subscribe();}});
+
+async function load(){const {data,error}=await sb.from('videos').select('*').order('created_at',{ascending:false});
+  if(!error){rows=data;render();}}
+
+$('add').onsubmit=async e=>{e.preventDefault();
+  await sb.from('videos').insert({title:$('n-title').value,client:$('n-client').value,footage_url:$('n-link').value||null});
+  e.target.reset();};
+
+const upd=(id,patch)=>sb.from('videos').update(patch).eq('id',id);
+window.act=async(id,a,v)=>{
+  if(a==='take')await upd(id,{editor_name:myName(),status:'Editing'});
+  if(a==='release')await upd(id,{editor_name:null,status:'Pending'});
+  if(a==='status')await upd(id,{status:v});
+  if(a==='del'&&confirm('Delete this video?'))await sb.from('videos').delete().eq('id',id);};
+
+function render(){
+  $('tabs').innerHTML=['All',...STATUSES].map(s=>{const n=s==='All'?rows.length:rows.filter(r=>r.status===s).length;
+    return `<button class="${s===filter?'on':''}" onclick="filter='${s}';render()">${s} · ${n}</button>`}).join('');
+  const v=rows.filter(r=>filter==='All'||r.status===filter);
+  $('list').innerHTML=v.length?v.map(r=>`<div class="row">
+    <div><div class="t">${esc(r.title)}</div>${r.footage_url?`<a href="${esc(r.footage_url)}" target="_blank" rel="noopener">Footage ↗</a>`:''}</div>
+    <div class="c">${esc(r.client)||'—'}</div>
+    <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
+    <div><span class="dot" style="background:var(${COLORS[r.status]})"></span><select style="width:auto;padding:6px 10px" onchange="act('${r.id}','status',this.value)">${STATUSES.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="acts">${r.editor_name?`<button onclick="act('${r.id}','release')">Release</button>`:`<button onclick="act('${r.id}','take')">I’ll edit</button>`}<button onclick="act('${r.id}','del')">✕</button></div>
+  </div>`).join(''):'<div class="empty">Nothing here yet.</div>';}
+</script>
+</body>
+</html>
