@@ -23,6 +23,9 @@ input:focus,select:focus{outline:1px solid var(--text)}
 button{cursor:pointer;border:1px solid var(--line);background:transparent;border-radius:999px;padding:9px 18px}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
 button:hover{border-color:var(--text)}
+button:disabled{opacity:.55;cursor:wait}
+input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+#search{max-width:100%}
 .login{max-width:380px;display:grid;gap:12px}
 .add{display:grid;grid-template-columns:2fr 1.5fr 2fr auto;gap:10px;margin-bottom:28px}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
@@ -60,8 +63,9 @@ footer{margin-top:60px;color:var(--mute);font-size:13px}
       <input id="n-link" type="url" placeholder="Raw footage / Drive link">
       <button class="primary">Add video</button>
     </form>
+    <input id="search" type="search" placeholder="Search videos, clients or editors…" aria-label="Search videos" style="margin-bottom:14px">
     <div class="tabs" id="tabs"></div>
-    <div id="list"></div>
+    <div id="list" aria-live="polite"></div>
   </main>
   <footer>© 2026 Rudrakrit. Consider it handled.</footer>
 </div>
@@ -73,7 +77,7 @@ const SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
 const STATUSES=['Pending','Editing','Review','Done'];
 const COLORS={Pending:'--pending',Editing:'--editing',Review:'--review',Done:'--done'};
 const $=id=>document.getElementById(id);
-let me=null,rows=[],filter='All',channel=null,loginBusy=false;
+let me=null,rows=[],filter='All',channel=null,loginBusy=false,addBusy=false,loading=false;
 function notify(message,type='error'){
   const box=$('notice'); box.textContent=message; box.className='notice'+(type==='ok'?' ok':type==='warn'?' warn':'');
 }
@@ -89,7 +93,8 @@ function explainError(error,context=''){
   if(msg.includes('relation')&&msg.includes('does not exist')) return 'Login succeeded, but the videos table is missing. Create public.videos in Supabase SQL Editor.';
   if(msg.includes('row-level security')||msg.includes('permission denied')||msg.includes('not allowed')) return 'Supabase blocked this database action. Check the videos table’s RLS policies for the authenticated role.';
   if(msg.includes('column')&&msg.includes('does not exist')) return 'The videos table schema does not match this app. Check that it has title, client, footage_url, editor_name, status, and created_at columns.';
-  return (context?context+': ':'')+raw;
+  const extra=[error?.code,error?.details,error?.hint].filter(Boolean).join(' · ');
+  return (context?context+': ':'')+raw+(extra?' ('+extra+')':'');
 }
 if(!window.supabase?.createClient){
   notify('The Supabase client library did not load. Check your connection or CDN access, then refresh.'); throw new Error('Supabase JS client unavailable');
@@ -122,8 +127,8 @@ sb.auth.onAuthStateChange((event,session)=>{
   $('out').classList.toggle('hide',!me);
   if(me){
     if(event==='SIGNED_IN') notify('Login successful. Fetching videos…','ok');
-    // Defer Supabase calls outside the auth callback to avoid locking its internal client.
-    setTimeout(()=>{load();startRealtime();},0);
+    // Avoid duplicate subscriptions and reloads on token refresh events.
+    if(event==='SIGNED_IN'||event==='INITIAL_SESSION') setTimeout(()=>{load();if(!channel)startRealtime();},0);
   }else{
     rows=[];render();
     if(channel){sb.removeChannel(channel);channel=null;}
@@ -131,6 +136,8 @@ sb.auth.onAuthStateChange((event,session)=>{
 });
 
 async function load(){
+  if(loading)return;
+  loading=true;$('list').innerHTML='<div class="empty">Loading videos…</div>';
   try{
     const {data,error}=await sb.from('videos').select('*').order('created_at',{ascending:false});
     if(error)throw error;
@@ -138,6 +145,7 @@ async function load(){
     if(!rows.length) notify('Connected to Supabase. No videos yet — add your first video.','ok');
     else clearNotice();
   }catch(error){notify(explainError(error,'Could not load videos'));}
+  finally{loading=false;}
 }
 function startRealtime(){
   if(channel)sb.removeChannel(channel);
@@ -148,7 +156,10 @@ function startRealtime(){
     });
 }
 $('add').onsubmit=async e=>{
-  e.preventDefault();clearNotice();
+  e.preventDefault();if(addBusy)return;clearNotice();
+  const rawLink=$('n-link').value.trim();
+  if(rawLink){try{const u=new URL(rawLink);if(!['http:','https:'].includes(u.protocol))throw new Error();}catch{notify('Enter a valid http or https footage link.');$('n-link').focus();return;}}
+  addBusy=true;
   const button=$('add').querySelector('button');button.disabled=true;button.textContent='Adding…';
   try{
     const {error}=await sb.from('videos').insert({
@@ -158,11 +169,12 @@ $('add').onsubmit=async e=>{
     if(error)throw error;
     e.target.reset();notify('Video added successfully.','ok');await load();
   }catch(error){notify(explainError(error,'Could not add video'));}
-  finally{button.disabled=false;button.textContent='Add video';}
+  finally{addBusy=false;button.disabled=false;button.textContent='Add video';}
 };
 async function updateVideo(id,patch){
-  const {error}=await sb.from('videos').update(patch).eq('id',id);
+  const {data,error}=await sb.from('videos').update(patch).eq('id',id).select('id');
   if(error)throw error;
+  if(!data?.length)throw new Error('No row was updated. You may not have permission, or the video may have been removed.');
   await load();
 }
 window.act=async(id,action,value)=>{
@@ -181,17 +193,26 @@ window.act=async(id,action,value)=>{
 function render(){
   $('tabs').innerHTML=['All',...STATUSES].map(s=>{
     const n=s==='All'?rows.length:rows.filter(r=>r.status===s).length;
-    return `<button class="${s===filter?'on':''}" onclick="filter='${s}';render()">${s} · ${n}</button>`;
+    return `<button type="button" class="filter-btn ${s===filter?'on':''}" data-filter="${s}">${s} · ${n}</button>`;
   }).join('');
-  const visible=rows.filter(r=>filter==='All'||r.status===filter);
-  $('list').innerHTML=visible.length?visible.map(r=>`<div class="row">
-    <div><div class="t">${esc(r.title)}</div>${r.footage_url?`<a href="${esc(r.footage_url)}" target="_blank" rel="noopener">Footage ↗</a>`:''}</div>
-    <div class="c">${esc(r.client)||'—'}</div>
-    <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
-    <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span><select style="width:auto;padding:6px 10px" onchange="act('${esc(r.id)}','status',this.value)">${STATUSES.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
-    <div class="acts">${r.editor_name?`<button onclick="act('${esc(r.id)}','release')">Release</button>`:`<button onclick="act('${esc(r.id)}','take')">I’ll edit</button>`}<button onclick="act('${esc(r.id)}','del')">✕</button></div>
-  </div>`).join(''):'<div class="empty">Nothing here yet.</div>';
+  const q=$('search').value.trim().toLowerCase();
+  const visible=rows.filter(r=>(filter==='All'||r.status===filter)&&[r.title,r.client,r.editor_name].some(v=>String(v||'').toLowerCase().includes(q)));
+  $('list').innerHTML=visible.length?visible.map(r=>{
+    let footage='';
+    try{const u=new URL(r.footage_url);if(['http:','https:'].includes(u.protocol))footage=`<a href="${esc(u.href)}" target="_blank" rel="noopener noreferrer">Footage ↗</a>`;}catch{}
+    return `<div class="row" data-row-id="${esc(r.id)}">
+      <div><div class="t">${esc(r.title)}</div>${footage}</div>
+      <div class="c">${esc(r.client)||'—'}</div>
+      <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
+      <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span><select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="acts">${r.editor_name?`<button type="button" data-action="release">Release</button>`:`<button type="button" data-action="take">I’ll edit</button>`}<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button></div>
+    </div>`;
+  }).join(''):'<div class="empty">No matching videos. Try another search or filter.</div>';
 }
+$('search').addEventListener('input',render);
+$('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-filter]');if(!b)return;filter=b.dataset.filter;render();});
+$('list').addEventListener('change',e=>{if(e.target.matches('[data-action="status"]')){const row=e.target.closest('[data-row-id]');if(row)act(row.dataset.rowId,'status',e.target.value);}});
+$('list').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(!b)return;const row=b.closest('[data-row-id]');if(row)act(row.dataset.rowId,b.dataset.action);});
 render();
 </script>
 </body>
