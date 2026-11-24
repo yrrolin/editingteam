@@ -195,6 +195,19 @@ window.act=async(id,action,value)=>{
     if(action==='release'&&role==='owner')await updateVideo(id,{editor_id:null,editor_name:null,status:'Pending'});
     if(action==='release'&&role==='editor'){const {error}=await sb.rpc('release_video',{p_video_id:String(id)});if(error)throw error;await load();}
     if(action==='status')await updateVideo(id,{status:value});
+    if(action==='edit'){
+      const video=rows.find(r=>String(r.id)===String(id));
+      if(!video)throw new Error('Video not found. Refresh the board and try again.');
+      const nextTitle=prompt('Edit video title:',video.title||'');
+      if(nextTitle===null)return;
+      if(!nextTitle.trim())throw new Error('Video title cannot be empty.');
+      const nextUrl=prompt('Edit footage URL (leave blank to remove it):',video.footage_url||'');
+      if(nextUrl===null)return;
+      const cleanUrl=nextUrl.trim();
+      if(cleanUrl){try{const u=new URL(cleanUrl);if(!['http:','https:'].includes(u.protocol))throw new Error();}catch{throw new Error('Enter a valid http or https footage link, or leave it blank.');}}
+      await updateVideo(id,{title:nextTitle.trim(),footage_url:cleanUrl||null});
+      notify('Video title and footage URL updated.','ok');
+    }
     if(action==='del'&&(role==='owner'||(role==='editor'&&rows.find(r=>String(r.id)===String(id))?.editor_id===me?.id))&&confirm('Delete this video?')){
       const {error}=await sb.from('videos').delete().eq('id',id);
       if(error)throw error;await load();notify('Video deleted.','ok');
@@ -218,7 +231,7 @@ function render(){
       <div class="c">${esc(r.client)||'—'}</div>
       <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
       <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span>${canManage?`<select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select>`:`<span>${esc(r.status||'Pending')}</span>`}</div>
-      <div class="acts">${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
+      <div class="acts">${canManage?`<button type="button" data-action="edit" aria-label="Edit ${esc(r.title)}">Edit</button><button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
     </div>`;
   }).join(''):'<div class="empty">No matching videos. Try another search or filter.</div>';
 }
