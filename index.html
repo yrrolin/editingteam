@@ -77,7 +77,7 @@ const SUPABASE_KEY='sb_publishable_R8AFI-C_B3DyRExE38jotg_qwi9QgiF';
 const STATUSES=['Pending','Editing','Review','Done'];
 const COLORS={Pending:'--pending',Editing:'--editing',Review:'--review',Done:'--done'};
 const $=id=>document.getElementById(id);
-let me=null,rows=[],filter='All',channel=null,loginBusy=false,addBusy=false,loading=false;
+let me=null,role=null,rows=[],filter='All',channel=null,loginBusy=false,addBusy=false,loading=false;
 function notify(message,type='error'){
   const box=$('notice'); box.textContent=message; box.className='notice'+(type==='ok'?' ok':type==='warn'?' warn':'');
 }
@@ -126,9 +126,17 @@ sb.auth.onAuthStateChange((event,session)=>{
   $('board').classList.toggle('hide',!me);
   $('out').classList.toggle('hide',!me);
   if(me){
-    if(event==='SIGNED_IN') notify('Login successful. Fetching videos…','ok');
-    // Avoid duplicate subscriptions and reloads on token refresh events.
-    if(event==='SIGNED_IN'||event==='INITIAL_SESSION') setTimeout(()=>{load();if(!channel)startRealtime();},0);
+    if(event==='SIGNED_IN') notify('Login successful. Checking your role…','ok');
+    if(event==='SIGNED_IN'||event==='INITIAL_SESSION') setTimeout(async()=>{
+      try{
+        const {data,error}=await sb.from('team_members').select('role').eq('user_id',me.id).single();
+        if(error)throw error; role=data.role;
+        if(role==='client'){location.replace('dashboard.html');return;}
+        if(!['owner','editor'].includes(role))throw new Error('This account has no permitted Rudrakrit role.');
+        $('add').classList.toggle('hide',role!=='owner'&&role!=='editor');
+        await load();if(!channel)startRealtime();
+      }catch(error){notify(explainError(error,'Role check failed. Run the Supabase roles migration first'));await sb.auth.signOut();}
+    },0);
   }else{
     rows=[];render();
     if(channel){sb.removeChannel(channel);channel=null;}
@@ -164,7 +172,7 @@ $('add').onsubmit=async e=>{
   try{
     const {error}=await sb.from('videos').insert({
       title:$('n-title').value.trim(),client:$('n-client').value.trim(),
-      footage_url:$('n-link').value.trim()||null
+      footage_url:$('n-link').value.trim()||null,editor_id:role==='editor'?me.id:null
     });
     if(error)throw error;
     e.target.reset();notify('Video added successfully.','ok');await load();
@@ -180,10 +188,12 @@ async function updateVideo(id,patch){
 window.act=async(id,action,value)=>{
   clearNotice();
   try{
-    if(action==='take')await updateVideo(id,{editor_name:myName(),status:'Editing'});
-    if(action==='release')await updateVideo(id,{editor_name:null,status:'Pending'});
+    if(action==='take'){
+      const {error}=await sb.rpc('claim_video',{p_video_id:String(id)});if(error)throw error;await load();
+    }
+    if(action==='release'&&role==='owner')await updateVideo(id,{editor_id:null,editor_name:null,status:'Pending'});
     if(action==='status')await updateVideo(id,{status:value});
-    if(action==='del'&&confirm('Delete this video?')){
+    if(action==='del'&&(role==='owner'||(role==='editor'&&rows.find(r=>String(r.id)===String(id))?.editor_id===me?.id))&&confirm('Delete this video?')){
       const {error}=await sb.from('videos').delete().eq('id',id);
       if(error)throw error;await load();notify('Video deleted.','ok');
     }
@@ -200,12 +210,14 @@ function render(){
   $('list').innerHTML=visible.length?visible.map(r=>{
     let footage='';
     try{const u=new URL(r.footage_url);if(['http:','https:'].includes(u.protocol))footage=`<a href="${esc(u.href)}" target="_blank" rel="noopener noreferrer">Footage ↗</a>`;}catch{}
+    const canManage=role==='owner'||(role==='editor'&&r.editor_id===me?.id);
+    const canClaim=role==='editor'&&!r.editor_id;
     return `<div class="row" data-row-id="${esc(r.id)}">
       <div><div class="t">${esc(r.title)}</div>${footage}</div>
       <div class="c">${esc(r.client)||'—'}</div>
       <div class="e">${r.editor_name?esc(r.editor_name):'Unassigned'}</div>
-      <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span><select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select></div>
-      <div class="acts">${r.editor_name?`<button type="button" data-action="release">Release</button>`:`<button type="button" data-action="take">I’ll edit</button>`}<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button></div>
+      <div><span class="dot" style="background:var(${COLORS[r.status]||'--pending'})"></span>${canManage?`<select aria-label="Status for ${esc(r.title)}" data-action="status" style="width:auto;padding:6px 10px">${STATUSES.map(s=>`<option value="${s}" ${s===r.status?'selected':''}>${s}</option>`).join('')}</select>`:`<span>${esc(r.status||'Pending')}</span>`}</div>
+      <div class="acts">${canClaim?`<button type="button" data-action="take">I’ll edit</button>`:''}${role==='owner'&&r.editor_id?`<button type="button" data-action="release">Release</button>`:''}${canManage?`<button type="button" data-action="del" aria-label="Delete ${esc(r.title)}">✕</button>`:''}</div>
     </div>`;
   }).join(''):'<div class="empty">No matching videos. Try another search or filter.</div>';
 }
