@@ -35,6 +35,7 @@ input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{ou
 <div id="work" class="grid"><div class="loading">Loading work…</div></div>
 <div class="section-head"><div><h2>Client projects</h2><p>Progress grouped by client or project.</p></div></div>
 <div id="clients" class="grid"><div class="loading">Loading clients…</div></div>
+<section id="teamsection" class="hide"><div class="section-head"><div><h2>Team access</h2><p>Owner controls for account roles and client access.</p></div></div><div id="team" class="grid"></div></section>
 </div>
 <div id="signedout" class="empty hide">Please <a href="index.html" style="color:var(--text)">sign in on the Edit Board</a> first. Your session will be shared with this dashboard.</div>
 <footer>© 2026 Rudrakrit. Consider it handled.</footer>
@@ -54,8 +55,9 @@ async function showSession(user){
  try{
   const {data,error}=await sb.from('team_members').select('role').eq('user_id',user.id).single();if(error)throw error;role=data.role;
   $('boardlink').classList.toggle('hide',role==='client');
+  $('teamsection').classList.toggle('hide',role!=='owner');
   if(!['owner','editor','client'].includes(role))throw new Error('This account has no permitted Rudrakrit role.');
-  refresh();if(!channel)subscribe();
+  refresh();if(role==='owner')loadTeam();if(!channel)subscribe();
  }catch(e){notice('Role check failed. Run the Supabase roles migration first: '+(e.message||''));await sb.auth.signOut();}
 }
 async function refresh(){
@@ -67,6 +69,24 @@ async function refresh(){
 function subscribe(){
  channel=sb.channel('dashboard-videos').on('postgres_changes',{event:'*',schema:'public',table:'videos'},()=>refresh()).subscribe(s=>{if(s==='CHANNEL_ERROR'||s==='TIMED_OUT')notice('Live updates are unavailable. Refresh to see the latest changes.');});
 }
+async function loadTeam(){
+ try{
+  const {data,error}=await sb.from('team_members').select('user_id,email,role,client_name').order('email');
+  if(error)throw error;
+  $('team').innerHTML=(data||[]).map(m=>'<article class="card team-member" data-user="'+esc(m.user_id)+'"><h3>'+esc(m.email||'Team account')+'</h3><div style="display:grid;gap:9px"><select class="member-role" aria-label="Role for '+esc(m.email)+'"><option value="owner" '+(m.role==='owner'?'selected':'')+'>Owner</option><option value="editor" '+(m.role==='editor'?'selected':'')+'>Editor</option><option value="client" '+(m.role==='client'?'selected':'')+'>Client</option></select><input class="member-client" value="'+esc(m.client_name||'')+'" placeholder="Client/project name (clients only)"><button type="button" class="save-member">Save access</button></div></article>').join('')||'<div class="empty">No team accounts found.</div>';
+ }catch(e){notice('Could not load team access: '+e.message);}
+}
+$('team').addEventListener('click',async e=>{
+ const button=e.target.closest('.save-member');if(!button)return;
+ const card=button.closest('.team-member'),userId=card.dataset.user,roleValue=card.querySelector('.member-role').value,clientName=card.querySelector('.member-client').value.trim();
+ if(roleValue==='client'&&!clientName){notice('Enter a client/project name for client accounts.');return;}
+ button.disabled=true;
+ try{
+  const {error}=await sb.from('team_members').update({role:roleValue,client_name:roleValue==='client'?clientName:null}).eq('user_id',userId);
+  if(error)throw error;notice('Team access updated.',true);await loadTeam();
+ }catch(e){notice('Could not update team access: '+e.message);}
+ finally{button.disabled=false;}
+});
 function count(status){return rows.filter(r=>r.status===status).length;}
 function render(){
  $('stats').innerHTML=[['Total',rows.length],...STATUSES.map(s=>[s,count(s)])].map(([s,n])=>'<div class="stat" '+(s!=='Total'?'data-status="'+s+'"':'')+'><div class="num">'+n+'</div><div class="label">'+s+' videos</div></div>').join('');
